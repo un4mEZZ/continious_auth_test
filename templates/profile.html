@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile: {{ profile_username }}</title>
+    <link href="/static/styles.css" rel="stylesheet">
+    <script>
+        async function addComment() {
+            const text = document.getElementById('comment-input').value;
+            await fetch(`/comment/{{ profile_username }}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            location.reload();
+        }
+
+        async function logout() {
+            await fetch('/logout', { method: 'POST' });
+            window.location.href = '/login';
+        }
+    </script>
+</head>
+<body>
+    <div class="user-info">
+        <span>Logged in as: {{ current_user }}</span>
+        <button class="logout-btn" onclick="logout()">Выйти</button>
+    </div>
+    <div class="container">
+        <h1>{{ profile_username }}'s Profile</h1>
+        <h2>Comments</h2>
+        <ul>
+            {% for comment in comments %}
+                <!--
+                   ИЗМЕНЕНИЕ: Убран фильтр | safe.
+                   Теперь результат SSTI экранируется.
+                   {{ 7*7 }} выведет "49"
+                   {{ '<script>' }} выведет "<script>" (видимый текст)
+                -->
+                <li style="white-space: pre-wrap;">{{ comment }}</li>
+            {% endfor %}
+        </ul>
+        {% if can_comment %}
+            <h3>Add Comment</h3>
+            <textarea id="comment-input" rows="3"></textarea>
+            <button onclick="addComment()">Submit Comment</button>
+        {% endif %}
+        <h2>Users</h2>
+        <ul>
+            {% for user in user_list %}
+                <li><a href="/user/{{ user }}">{{ user }}</a></li>
+            {% endfor %}
+        </ul>
+    </div>
+</body>
+</html>
