@@ -1,0 +1,94 @@
+-- 1) Table: auth.users
+
+-- DROP TABLE IF EXISTS auth.users;
+
+CREATE TABLE IF NOT EXISTS auth.users
+(
+    uuid uuid NOT NULL DEFAULT gen_random_uuid(),
+    login character varying(255) COLLATE pg_catalog."default" NOT NULL,
+    password character varying(255) COLLATE pg_catalog."default" NOT NULL,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text),
+    CONSTRAINT users_pkey PRIMARY KEY (uuid),
+    CONSTRAINT users_login_key UNIQUE (login)
+)
+
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS auth.users
+    OWNER to postgres;
+
+
+
+-- 2) Table: auth.comments
+
+-- DROP TABLE IF EXISTS auth.comments;
+
+CREATE TABLE IF NOT EXISTS auth.comments
+(
+    id integer NOT NULL DEFAULT nextval('auth.comments_id_seq'::regclass),
+    target_user_login character varying(255) COLLATE pg_catalog."default",
+    author_login character varying(255) COLLATE pg_catalog."default",
+    text text COLLATE pg_catalog."default",
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text),
+    CONSTRAINT comments_pkey PRIMARY KEY (id),
+    CONSTRAINT comments_target_user_login_fkey FOREIGN KEY (target_user_login)
+        REFERENCES auth.users (login) MATCH SIMPLE
+        ON UPDATE NO ACTION
+        ON DELETE NO ACTION
+)
+
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS auth.comments
+    OWNER to postgres;
+
+
+
+-- 3) Table: auth.behavior_profiles
+
+-- DROP TABLE IF EXISTS auth.behavior_profiles;
+
+CREATE TABLE IF NOT EXISTS auth.behavior_profiles
+(
+    user_id uuid NOT NULL,
+    features jsonb,
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text),
+    CONSTRAINT behavior_profiles_pkey PRIMARY KEY (user_id),
+    CONSTRAINT behavior_profiles_user_id_fkey FOREIGN KEY (user_id)
+        REFERENCES auth.users (uuid) MATCH SIMPLE
+        ON UPDATE NO ACTION
+        ON DELETE CASCADE
+)
+
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS auth.behavior_profiles
+    OWNER to postgres;
+
+
+
+-- 4) Table: auth.auth_events
+
+-- DROP TABLE IF EXISTS auth.auth_events;
+
+CREATE TABLE IF NOT EXISTS auth.auth_events
+(
+    id integer NOT NULL DEFAULT nextval('auth.auth_events_id_seq'::regclass),
+    user_id uuid,
+    score double precision,
+    decision boolean,
+    ts timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text),
+    CONSTRAINT auth_events_pkey PRIMARY KEY (id),
+    CONSTRAINT auth_events_user_id_fkey FOREIGN KEY (user_id)
+        REFERENCES auth.users (uuid) MATCH SIMPLE
+        ON UPDATE NO ACTION
+        ON DELETE CASCADE
+)
+
+TABLESPACE pg_default;
+
+ALTER TABLE IF EXISTS auth.auth_events
+    OWNER to postgres;
+
+
+
