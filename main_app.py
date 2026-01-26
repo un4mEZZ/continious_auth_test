@@ -10,14 +10,13 @@ from sqlalchemy import select
 from models import User, Comment
 
 # --- CONFIG ---
-# Подключение к ТОЙ ЖЕ базе данных (для чтения комментов/пользователей)
 DATABASE_URL = "postgresql+asyncpg://postgres:1111@localhost:5432/behavioural_auth"
 AUTH_SERVICE_URL = "http://localhost:8001"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-app = FastAPI(title="Main Application")
+app = FastAPI(title="Main App (Resource)")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -27,11 +26,12 @@ async def get_db():
         yield session
 
 
-# --- AUTH CLIENT ---
-async def check_auth(request: Request) -> str:
+# --- ВЗАИМОДЕЙСТВИЕ С AUTH SERVICE ---
+
+async def check_auth_status(request: Request):
     """
-    Отправляет запрос на Auth Server для проверки поведения.
-    Возвращает username, если все ОК. Иначе вызывает HTTPException.
+    Отправляет запрос в Auth Service.
+    Auth Service сам решит: обучать профиль (если новый) или проверять (если старый).
     """
     session_id = request.cookies.get("session_id")
     if not session_id:
@@ -39,20 +39,24 @@ async def check_auth(request: Request) -> str:
 
     async with httpx.AsyncClient() as client:
         try:
-            # Запрашиваем у "Метрики": можно ли доверять этому юзеру?
+            # Мы просто говорим: "Проверь сессию".
+            # Вся логика "Обучение vs Защита" скрыта внутри этого вызова.
             response = await client.post(
                 f"{AUTH_SERVICE_URL}/internal/verify_session",
                 json={"session_id": session_id}
             )
+
             if response.status_code == 200:
-                data = response.json()
-                return data["username"]
+                return response.json()  # Возвращает {username, mode, score}
+
             elif response.status_code == 403:
-                raise HTTPException(status_code=403, detail="Suspicious behavior blocked by Auth Server")
+                # Auth Service решил, что поведение подозрительное
+                raise HTTPException(status_code=403, detail="Security Alert: Behavior mismatch")
             else:
                 raise HTTPException(status_code=401, detail="Session invalid")
+
         except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Auth Service unavailable")
+            raise HTTPException(status_code=503, detail="Auth Service Unavailable")
 
 
 # --- ROUTES ---
@@ -60,8 +64,8 @@ async def check_auth(request: Request) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     try:
-        username = await check_auth(request)
-        return RedirectResponse(f"/user/{username}", status_code=303)
+        auth_data = await check_auth_status(request)
+        return RedirectResponse(f"/user/{auth_data['username']}", status_code=303)
     except HTTPException:
         return RedirectResponse("/login", status_code=303)
 
@@ -73,13 +77,14 @@ async def register_page(request: Request):
 
 @app.post("/register")
 async def register(username: str = Form(...), password: str = Form(...)):
+    # 1. Просто создаем юзера в Auth Service
     async with httpx.AsyncClient() as client:
-        # Проксируем регистрацию на Auth Server
         resp = await client.post(f"{AUTH_SERVICE_URL}/internal/register",
                                  json={"username": username, "password": password})
         if resp.status_code != 200:
-            return HTMLResponse("Registration failed or user exists", status_code=400)
+            return HTMLResponse("Registration failed (User exists)", status_code=400)
 
+    # 2. Перенаправляем на логин (или можно сразу логинить, но по классике на логин)
     return RedirectResponse("/login", status_code=303)
 
 
@@ -91,15 +96,13 @@ async def login_page(request: Request):
 @app.post("/login")
 async def login(username: str = Form(...), password: str = Form(...)):
     async with httpx.AsyncClient() as client:
-        # Проксируем логин на Auth Server
         resp = await client.post(f"{AUTH_SERVICE_URL}/internal/login",
                                  json={"username": username, "password": password})
 
         if resp.status_code == 200:
             data = resp.json()
-            session_id = data["session_id"]
             response = RedirectResponse(f"/user/{username}", status_code=303)
-            response.set_cookie("session_id", session_id)
+            response.set_cookie("session_id", data["session_id"])
             return response
         else:
             return HTMLResponse("Invalid credentials", status_code=401)
@@ -107,19 +110,29 @@ async def login(username: str = Form(...), password: str = Form(...)):
 
 @app.get("/user/{profile_username}", response_class=HTMLResponse)
 async def profile_page(request: Request, profile_username: str, db: AsyncSession = Depends(get_db)):
-    # 1. Проверяем аутентификацию через внешний сервис
+    # --- МОМЕНТ ИСТИНЫ ---
+    # При загрузке страницы происходит обращение к Auth Service.
+    # 1. Если это первый вход после регистрации -> Auth Service создаст профиль (Learning).
+    # 2. Если это n-ный вход -> Auth Service проверит поведение (Protection).
+
     try:
-        current_user = await check_auth(request)
+        auth_data = await check_auth_status(request)
+        current_user = auth_data['username']
+        security_mode = auth_data.get('mode', 'UNKNOWN')  # LEARNING или PROTECTION
+        trust_score = auth_data.get('score', 1.0)
     except HTTPException as e:
         if e.status_code == 403:
             resp = HTMLResponse(
-                "<h1>403 Forbidden</h1><p>Behavior check failed (Auth Server blocked you).</p><a href='/login'>Login</a>",
-                status_code=403)
+                "<h1>403 Access Denied</h1>"
+                "<p style='color:red'>Система обнаружила аномальное поведение, отличное от вашего профиля.</p>"
+                "<a href='/login'>Войти заново</a>",
+                status_code=403
+            )
             resp.delete_cookie("session_id")
             return resp
         return RedirectResponse("/login", status_code=303)
 
-    # 2. Логика отображения (не изменилась)
+    # Загрузка данных страницы
     user_res = await db.execute(select(User).where(User.login == profile_username))
     if not user_res.scalars().first():
         return HTMLResponse("User not found", status_code=404)
@@ -130,23 +143,28 @@ async def profile_page(request: Request, profile_username: str, db: AsyncSession
     users_res = await db.execute(select(User.login))
     user_list = users_res.scalars().all()
 
+    # Показываем статус безопасности прямо на странице для наглядности
+    system_status = f"System Mode: {security_mode} | Trust Score: {trust_score}"
+
     return templates.TemplateResponse("profile.html", {
         "request": request,
         "current_user": current_user,
         "profile_username": profile_username,
         "comments": comment_texts,
         "user_list": user_list,
-        "can_comment": (profile_username != current_user)
+        "can_comment": (profile_username != current_user),
+        "system_status": system_status
     })
 
 
 @app.post("/comment/{profile_username}")
 async def add_comment(request: Request, profile_username: str, db: AsyncSession = Depends(get_db)):
-    # Проверка через внешний сервис
+    # При отправке комментария тоже идет проверка
     try:
-        current_user = await check_auth(request)
+        auth_data = await check_auth_status(request)
+        current_user = auth_data['username']
     except HTTPException:
-        return JSONResponse(status_code=403, content={"status": "error", "message": "Auth check failed"})
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Behavior check failed"})
 
     if profile_username == current_user:
         return {"status": "error", "message": "Cannot comment on self"}
