@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
 from models import Base, User, BehaviorProfile, AuthEvent
+import redis.asyncio as aioredis
 
 # --- CONFIG ---
 DATABASE_URL = "postgresql+asyncpg://postgres:1111@localhost:5432/behavioural_auth"
@@ -13,7 +14,7 @@ engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 app = FastAPI(title="Auth Service (Brain)")
-sessions = {}  # session_id -> user_login
+redis = aioredis.from_url("redis://localhost:6379", decode_responses=True)
 
 
 async def get_db():
@@ -95,7 +96,7 @@ async def login_user(data: dict = Body(...), db: AsyncSession = Depends(get_db))
 
     # Создание сессии
     session_id = secrets.token_hex(16)
-    sessions[session_id] = user.login
+    await redis.set(session_id, user.login, ex=86400)
 
     return {"session_id": session_id, "username": user.login}
 
@@ -107,10 +108,12 @@ async def verify_session(data: dict = Body(...), db: AsyncSession = Depends(get_
     Вызывается основным приложением при КАЖДОМ действии пользователя.
     """
     session_id = data.get("session_id")
-    if not session_id or session_id not in sessions:
+    if not session_id:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    username = sessions[session_id]
+    username = await redis.get(session_id)
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid session")
 
     # 1. Получаем пользователя и его профиль
     user_res = await db.execute(select(User).where(User.login == username))
@@ -159,7 +162,7 @@ async def verify_session(data: dict = Body(...), db: AsyncSession = Depends(get_
     await db.commit()
 
     if not decision:
-        del sessions[session_id]  # Кикнуть пользователя
+        await redis.delete(session_id)  # Кикнуть пользователя
         raise HTTPException(status_code=403, detail="Behavior Verification Failed")
 
     return {
@@ -173,8 +176,8 @@ async def verify_session(data: dict = Body(...), db: AsyncSession = Depends(get_
 @app.post("/internal/logout")
 async def logout(data: dict = Body(...)):
     session_id = data.get("session_id")
-    if session_id in sessions:
-        del sessions[session_id]
+    if session_id:
+        await redis.delete(session_id)
     return {"status": "ok"}
 
 
