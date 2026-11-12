@@ -19,5 +19,5 @@ import ...
 
 DATABASE_URL = "postgresql+asyncpg://postgres:1111@localhost:5432/behavioural_auth"
 ...
+
 ```
-### 3) Run main_app.py & auth_service.py

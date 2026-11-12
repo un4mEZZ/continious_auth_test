@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: auth_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/init_databases.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: auth_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth_service:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.auth
+    container_name: auth_service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+      - "50051:50051"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      AUTH_DB_NAME: auth_service_db
+      MAIN_DB_NAME: main_app_db
+      AUTH_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/auth_service_db
+      AUTH_GRPC_PORT: 50051
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  main_app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.main
+    container_name: main_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      MAIN_DB_NAME: main_app_db
+      MAIN_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/main_app_db
+      AUTH_GRPC_URL: auth_service:50051
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth_service:
+        condition: service_started
+
+volumes:
+  pgdata:

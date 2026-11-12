@@ -21,6 +21,7 @@
             window.location.href = '/login';
         }
     </script>
+    <script src="/static/cont_auth.js"></script>
 </head>
 <body>
     <div class="user-info">
@@ -29,11 +30,6 @@
     </div>
     <div class="container">
         <h1>{{ profile_username }}'s Profile</h1>
-        {% if system_status %}
-        <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; text-align: center; border: 1px solid #ccc;">
-            {{ system_status }}
-        </div>
-        {% endif %}
         <h2>Comments</h2>
         <ul>
             {% for comment in comments %}

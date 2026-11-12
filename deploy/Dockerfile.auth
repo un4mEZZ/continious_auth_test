@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY proto/ /app/proto/
+COPY services/auth_service/ /app/services/auth_service/
+COPY services/main_app/models.py /app/services/main_app/models.py
+COPY services/main_app/__init__.py /app/services/main_app/__init__.py
+COPY scripts/ /app/scripts/
+
+EXPOSE 8001 50051
+
+# Initialize tables and start Auth Service (FastAPI + gRPC)
+CMD ["sh", "-c", "python scripts/init_db.py && uvicorn services.auth_service.app:app --host 0.0.0.0 --port 8001"]

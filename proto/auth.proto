@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package auth;
+
+enum SessionStatus {
+    STATUS_OK = 0;
+    STATUS_REAUTH_REQUIRED = 1;
+    STATUS_REVOKED = 2;
+    STATUS_IP_BLOCKED = 3;
+}
+
+service AuthService {
+    rpc CreateSession (CreateSessionRequest) returns (CreateSessionResponse);
+    rpc VerifySession (VerifySessionRequest) returns (VerifySessionResponse);
+    rpc Reauthenticate (ReauthenticateRequest) returns (ReauthenticateResponse);
+    rpc Logout (LogoutRequest) returns (LogoutResponse);
+}
+
+message CreateSessionRequest {
+    string username = 1;
+    string client_ip = 2;
+}
+
+message CreateSessionResponse {
+    bool success = 1;
+    string session_id = 2;
+    string message = 3;
+}
+
+message VerifySessionRequest {
+    string session_id = 1;
+    string client_ip = 2;
+}
+
+message VerifySessionResponse {
+    bool is_valid = 1;
+    string username = 2;
+    float trust_score = 3;
+    string message = 4;
+    SessionStatus status = 5;
+}
+
+message ReauthenticateRequest {
+    string session_id = 1;
+    string username = 2;
+    string password = 3;
+}
+
+message ReauthenticateResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message LogoutRequest {
+    string session_id = 1;
+}
+
+message LogoutResponse {
+    bool success = 1;
+}
